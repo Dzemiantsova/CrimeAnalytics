@@ -1,18 +1,16 @@
 ---
-title: "Kaggle: Rossmann Store Sales"
-author: "Liudmila Dzemiantsova"
-date: "October 16, 2015"
+title: "Visualization Assignment: Crime Analytics"
+date: "January 21, 2016"
 output: html_document
 ---
 
 **Description**
 
-The Website of the Kaggle competition is https://www.kaggle.com/c/rossmann-store-sales.
-Rossmann operates over 3,000 drug stores in 7 European countries. Currently, Rossmann store managers are tasked with predicting their daily sales for up to six weeks in advance. Store sales are influenced by many factors, including promotions, competition, school and state holidays, seasonality, and locality. With thousands of individual managers predicting sales based on their unique circumstances, the accuracy of results can be quite varied.
+An assignment is a part of ''Data Sience at Scale'' course on Coursera. In the given assignment, students are asked to analyze criminal incident data from Seattle or San Francisco to visualize patterns and, if desired, contrast and compare patterns across the two cities. One should produce a blog-post-style visual narrative consisting of a series of visualizations interspersed with sufficient descriptive text to make a convincing argument.
 
-**Task**
+**Data**
 
-In their first Kaggle competition, Rossmann is challenging you to predict 6 weeks of daily sales for 1,115 stores located across Germany. Reliable sales forecasts enable store managers to create effective staff schedules that increase productivity and motivation. 
+The data set used in this report is about Police Incident Reports of the city of San Francisco, on the Summer 2014. The data set is provided by Coursera.
 
 **Programming and Software**
 
@@ -20,136 +18,115 @@ The code is written with R v.3.2.1 using RStudio v.0.99.484
 
 **Libraries**
 
-```{r}
-source("multiplot.R")
-```
-
 ```{r, echo=FALSE}
-library(GGally)
-library(doParallel)
-library(caTools)
-library(pROC)
-library(caret)
-library(readr)
-library(mice)
-library(corrplot)
-library(maptools)
-library(maps)
-library(reshape2)
+
+library(stringi)  # Character String Processing Facilities
+library(reshape2) # Flexibly Reshape Data
+library(ggplot2)  # An Implementation of the Grammar of Graphics
+library(ggthemes) # Extra Themes, Scales and Geoms for ggplot2
+library(knitr)
+library(ggmap)
+#devtools::install_github("dkahle/ggmap")
+
+# Function
+capwords <- function(s, strict = FALSE) {
+  cap <- function(s) paste(toupper(substring(s, 1, 1)),
+                           {s <- substring(s, 2); if (strict) tolower(s) else s},
+                           sep      = "", 
+                           collapse = " ")
+  sapply(strsplit(s, split = " "), cap, USE.NAMES = !is.null(names(s)))
+}
+#setwd('D:\\MachineLearning\\ML with R\\Coursera\\CommunicatingDataScienceResults\\VisualisationAssignment\\CrimeAnalytics\\data')
 ```
 
-**Read The Training Data**
+**Read The Data**
 
 ```{r}
-registerDoParallel(cores=1)
-training <-  read.csv("train.csv")
-dim(training)
-sum(is.na(training))
-md.pattern(training)
+SF <-  read.csv("data/sanfrancisco_incidents_summer_2014.csv", stringsAsFactors = FALSE)
 ```
 
 **Exploratory Analysis**
 
+In general, the data can be understood in terms of a variable Category that has 34 levels. With the following analysis, one can find that the top category of incidents is Larceny/theft with 9,466, followed by Other Offenses (3,567) and Non-criminal (3,023).
+```{r, echo=FALSE}
+SF$Category <- factor(capwords(tolower(SF$Category)))
+```
+
 ```{r}
-fun <- function(x){ifelse(x == 0, "close", "open") }
-training$Open <- as.factor(sapply(training$Open, fun))
-table(training$Open, training$DayOfWeek)
+Data <- as.data.frame(table(SF$Category), stringsAsFactors = FALSE)
+colnames(Data) <- c("Category", "Frequency")
+Data <- Data[order(Data$Frequency, decreasing = TRUE), ]
+Data$Category  <- factor(Data$Category, levels = Data$Category)
+Data <- Data[1:15, ]
+```
 
-df1 <- data.frame(table(training$Open))
-colnames(df1) <- c('','Freq')
-df1$Perc <- df1$Freq / sum(df1$Freq) * 100
-df1
+```{r, echo=FALSE}
+g <- ggplot(Data)
+g <- g + geom_bar(aes(x = Category, y = Frequency, fill = Frequency), stat = "identity")
+g <- g + ggtitle(expression(atop("Which incidents are most common?", atop(italic("Top 15 Category of Incidents"), ""))))
+g <- g + scale_fill_continuous(low = "yellow", high = "red")
+g <- g + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+g
+```
 
-fun <- function(x){ifelse(x == 0, "no", "yes") }
-training$SchoolHoliday <- as.factor(sapply(training$SchoolHoliday, fun))
-table(training$SchoolHoliday, training$DayOfWeek)
+Next, one can find that during the week the incidents occur more in the evenings starting from 17 to 18 hours, stretching to 20 hours. There is also a second concentration around 12 hours. During weekends and including Fridays, the incidents are concentrated in the evening and then at late hours, around 23 hours.
 
-SchHoli.no <- vector()
-SchHoli.yes <- vector()
-for(i in 1:7){
-   SchHoli.no[i] <- sum(training[training$DayOfWeek==i & training$Open == "open" & training$SchoolHoliday == "no",]$Sales)
-   SchHoli.yes[i] <- sum(training[training$DayOfWeek==i & training$Open == "open" & training$SchoolHoliday == "yes",]$Sales)
-}
-DayOfWeek <- c(1, 2, 3, 4, 5, 6, 7)
-df1 <- data.frame(DayOfWeek = DayOfWeek, Day = SchHoli.no, Holiday = SchHoli.yes)
-df2 <- melt(data = df1, id.vars = "DayOfWeek")
-ggplot(data = df2, aes(x = DayOfWeek, y = value, colour = variable)) +
-       geom_point(size = 5)+
-       ylab("Sales") + xlab("Day Of Week")+
-       ggtitle("Sales Per School Holidays")
+```{r, echo=FALSE}
+# convert DayOfWeek to factors (Nominal) variable and force calendar order
+SF$DayOfWeek <- factor(SF$DayOfWeek, levels = c("Monday", "Tuesday",  "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"))
+SF$Hour <- stri_replace_all_regex(str= SF$Time,pattern= "([0-2][0-9]).*",replacement = "$1")
+SF$Hour<- factor(SF$Hour)
+# reduce DayOfWeek and Hour to a table of frequencies
+Data<- dcast(SF, DayOfWeek + Hour ~ .)
+# change columns' names
+colnames(Data)  <- c("DayOfWeek", "Hour", "Frequency")
 
-StHoli.no <- vector()
-StHoli.a <- vector()
-StHoli.b <- vector()
-StHoli.c <- vector()
-for(i in 1:7){
-   StHoli.no[i] <- sum(training[training$DayOfWeek==i & training$Open == "open" & training$StateHoliday == "0",]$Sales)
-   StHoli.a[i] <- sum(training[training$DayOfWeek==i & training$Open == "open" & training$StateHoliday == "a",]$Sales)
-   StHoli.b[i] <- sum(training[training$DayOfWeek==i & training$Open == "open" & training$StateHoliday == "b",]$Sales)
-   StHoli.c[i] <- sum(training[training$DayOfWeek==i & training$Open == "open" & training$StateHoliday == "c",]$Sales)
-}
-df1 <- data.frame(DayOfWeek = DayOfWeek, Holiday.A = StHoli.a, Holiday.B = StHoli.b, Holiday.C = StHoli.c, Day = StHoli.no)
-df2 <- melt(data = df1, id.vars = "DayOfWeek")
-ggplot(data = df2, aes(x = DayOfWeek, y = value, colour = variable))+
-       geom_point(size = 5)+
-       ylab("Sales") + xlab("Day Of Week")+
-       ggtitle("Sales Per State Holidays")
+# create the chart for resolution
+g <- ggplot(Data)
+g <- g + geom_point(aes(x = DayOfWeek, y = Hour, size = Frequency, colour = Frequency), stat = "identity")
+g <- g + ggtitle(expression(atop("How do incidents vary by time of day and night?", atop(italic("Hour by Day of the Week of Incidents"), ""))))
+g <- g + scale_colour_continuous(low = "yellow", high = "red")
+g
+```
 
-df1 <- data.frame(DayOfWeek = DayOfWeek, Holiday.A = StHoli.a, Holiday.B = StHoli.b, Holiday.C = StHoli.c)
-df2 <- melt(data = df1, id.vars = "DayOfWeek")
-ggplot(data = df2, aes(x = DayOfWeek, y = value, colour = variable))+
-       geom_point(size = 5)+
-       ylab("Sales") + xlab("Day Of Week")+
-       ggtitle("Sales Per State Holidays")
+With the geographical coordinates, it is possible to identify precisely the location of the incidents and relate to categories and periods. Larceny/theft and somewhat of Warrants are more predominant in the bay area, while Vehicle Theft are spread across the city.
 
-training$Date <- as.character(training$Date)
-fun1 <- function(x){strsplit(x, "-")[[1]][[1]]}
-training$Year <- as.factor(sapply(training$Date, fun1))
-fun2 <- function(x){strsplit(x, "-")[[1]][[2]]}
-training$Month <- as.factor(sapply(training$Date, fun2))
-fun3 <- function(x){strsplit(x, "-")[[1]][[3]]}
-training$Day <- as.factor(sapply(training$Date, fun3))
+```{r}
+SF$Latitude   <- SF$Y
+SF$Longitude  <- SF$X
+# filter top 5 relevant categories
+SF_sub <- subset(SF, Category %in% c("Larceny/theft", "Assault", 
+                                              "Vehicle Theft", "Warrants", 
+                                              "Drug/narcotic"))
+SF_sub$Category <- factor(SF_sub$Category)
+```
+```{r, echo=FALSE}
+# reduce Location to a table of frequencies
+Data <- dcast(SF_sub, Latitude + Longitude + Category ~ .)
+colnames(Data)  <- c("Latitude", "Longitude", "Category", "Frequency")
+# create the chart for Location / Categories
+g <- qmplot(Longitude, Latitude, data = Data, color = Category, size = I(1.5),
+            maptype = "toner-lite")
+g <- g + scale_colour_brewer(type = "div", palette = "Accent")
+g <- g + ggtitle(expression(atop("How do incidents vary by areas?", atop(italic("Location by Top Categories of Incidents"), ""))))
+g
+kable(t(table(SF_sub$Category)))
+```
 
-Sales.2015 <- sum(training[training$Year=="2015" & training$Open == "open",]$Sales)
-Sales.2014 <- sum(as.numeric(training[training$Year=="2014" & training$Open == "open",]$Sales))
-Sales.2013 <- sum(as.numeric(training[training$Year=="2013" & training$Open == "open",]$Sales))
+When filtering Larceny/Theft only and checking for the Day of the Week, there is a concentration in the bay ares and on Fridays and weekends.
 
-Year <- c(2013, 2014, 2015)
-Sales <- c(Sales.2013, Sales.2014, Sales.2015)
-df1 <- data.frame(Year = as.integer(Year), Sales = Sales)
-ggplot(data = df1, aes(x = Year, y = Sales))+
-       geom_point(size = 5)+
-       ylab("Sales") + xlab("Year")+
-       ggtitle("Sales Per Year")
+```{r}
+SF_sub <- subset(SF, Category == "Larceny/theft")
+Data <- dcast(SF_sub, Latitude + Longitude + DayOfWeek ~ .)
+colnames(Data) <- c("Latitude", "Longitude", "DayOfWeek", "Frequency")
+```
+```{r, echo=FALSE}
+# create the chart for Location / Categories
+g <- qmplot(Longitude, Latitude, data = Data, 
+            color = DayOfWeek, size = I(1.5), maptype = "toner-lite")
+g <- g + scale_colour_brewer(type = "div", palette = "BrBG")
+g <- g + ggtitle(expression(atop("How do incidents vary by areas and week days ?", atop(italic("Location by Day of Week of Incidents in Case of Larceny/Theft"), ""))))
+g
 
-df.2015 <- training[training$Year=="2015" & training$Open == "open",]
-df.2014 <- training[training$Year=="2014" & training$Open == "open",]
-df.2013 <- training[training$Year=="2013" & training$Open == "open",]
-Month.2015 <- vector()
-Month.2014 <- vector()
-Month.2013 <- vector()
-for(i in 1:12){
-   Month.2015[i] <- sum(df.2015[as.numeric(df.2015$Month) == i,]$Sales)
-   Month.2014[i] <- sum(df.2014[as.numeric(df.2014$Month) == i,]$Sales)
-   Month.2013[i] <- sum(df.2013[as.numeric(df.2013$Month) == i,]$Sales)
-}
-Month <- c(1,2,3,4,5,6,7,8,9,10,11,12)
-df1 <- data.frame(Month = Month, Year_2015 = Month.2015, Year_2014 = Month.2014, Year_2013 = Month.2013)
-df2 <- melt(data = df1, id.vars = "Month")
-ggplot(data = df2, aes(x = Month, y = value, colour = variable)) +
-       geom_point(size = 5)+
-       ylab("Sales") + xlab("Month")+
-       ggtitle("Sales Per Month")
-
-training <- training[,-3]
-ggpairs(training[training$Open == "open",], columns = c(1,3,4), legends=TRUE, lower = list(continuous = "points"),
-        diag = list(continuous = "density"), axisLabels = "show", colour = "Year",
-        title = "Density Distribution Of Store, Sales And Custemers With Respect To Year") # uper = "blank"
-
-ggpairs(training[training$Open == "open",], columns = c(1,3,4), legends=TRUE, lower = list(continuous = "points"),
-        diag = list(continuous = "density"), axisLabels = "show", colour = "Month",
-        title = "Density Distribution Of Store, Sales And Custemers With Respect To Month") # uper = "blank"
-
-training_numr = training[, sapply(training, is.numeric)]
-corrplot(cor(training_numr, method = "pearson"), method = "number",order = "hclust",type='lower', diag=F,addCoefasPercent=T)
+kable(t(table(SF_sub$DayOfWeek)))
 ```
